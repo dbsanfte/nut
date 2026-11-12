@@ -125,8 +125,10 @@ NUT status and alarms. Physical outage transitions require separate testing.
 
 Actual watts and remaining runtime are not supplied by the validated queries
 and are not estimated. Load percentage must not be treated as measured watts.
-No instant commands or writable hardware variables are advertised. The
-shutdown entry point reports unsupported without sending a power command.
+The driver implements no instant commands or writable hardware variables.
+NUT's common driver reload and shutdown commands may still be listed by
+linkman:upscmd[8]. The shutdown entry point reports unsupported without
+sending a power command.
 
 PROTOCOL EVIDENCE
 -----------------
