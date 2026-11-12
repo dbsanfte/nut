@@ -1,0 +1,149 @@
+NUTDRV_VIDA(8)
+==============
+
+NAME
+----
+
+nutdrv_vida - Read-only USB driver for VIDA Armour ARM3000 UPS equipment
+
+SYNOPSIS
+--------
+
+*nutdrv_vida* -h
+
+*nutdrv_vida* -a 'UPS_NAME' ['OPTIONS']
+
+NOTE: See linkman:nutupsdrv[8] for common driver options.
+
+SUPPORTED HARDWARE
+------------------
+
+VIDA Armour ARM3000, tested with firmware V4.20. Requires libusb-1.0.
+The generic USB identifier +0001:0000+ is also used by unrelated devices.
+This driver requires explicit physical port selectors and validates the
+complete, known HID report descriptor before reading telemetry.
+
+The firmware uses selected USB string descriptors as a command transport.
+Ordinary HID monitoring does not provide these readings. This driver avoids
+string discovery and sends only the four validated telemetry queries.
+It claims the HID interface and restores the previous kernel binding when
+closing it. Do not run another USB monitoring program against the same device.
+
+AUTOMATIC LINUX DISCOVERY
+------------------------
+
+For changing USB connections, enable +nut-vida-discovery.service+ and
++nut-vida-discovery.timer+ along with the standard NUT driver enumerator
+daemon. The discovery service scans the kernel USB inventory every three
+seconds without issuing USB requests. It authenticates new devices using
+the known report descriptor and maintains only a marked block in +ups.conf+.
+Existing administrator configuration outside that block is preserved.
+
+Adding a third unit, moving cables, removing some or all units, and later
+reconnecting them requires no configuration edit. The NUT driver enumerator
+creates and removes the corresponding driver instances and reloads the
+server. Configure its daemon interval as appropriate for the desired response
+time; for example, its +--daemon-after=3+ option checks every three seconds.
+Keep the server running with zero devices using +ALLOW_NO_DEVICE true+.
+
+Names such as +armour_usb_001_010+ identify current physical USB attachments,
+not permanent physical UPS identities. These controllers provide no usable
+serial number, so a unit moved to another port receives the name for its new
+attachment. A previously admitted kernel connection remains recognized while
+the native driver owns its HID interface. Cached admission is invalid after
+removal, address or object replacement, or reboot.
+
+For cold boot ordering, a +nut-driver@.service+ drop-in may specify
++After=nut-vida-discovery.service+. Enable discovery at +nut.target+ so its
+initial inventory is prepared before existing driver instances start.
+
+MANUAL CONFIGURATION
+--------------------
+
+Both *bus* and *busport* are required regular expressions. The bus is three
+decimal digits. The complete physical port chain uses three digits for each
+level, separated by dots. For example, Linux USB port +1-10+ is bus +001+
+and busport +010+; +1-2.3+ is bus +001+ and busport +002.003+.
+Port chains identify the wiring even after the USB device address changes.
+Recheck the bus selector if controller enumeration changes.
+
+Two UPS units can be configured independently in linkman:ups.conf[5]:
+
+----
+[armour_a]
+    driver = nutdrv_vida
+    port = auto
+    bus = "^001$"
+    busport = "^010$"
+
+[armour_b]
+    driver = nutdrv_vida
+    port = auto
+    bus = "^001$"
+    busport = "^002$"
+----
+
+Selectors matching multiple devices are rejected. An absent device or invalid
+telemetry marks the data stale. The driver checks its configured port again
+on subsequent polls and authenticates the descriptor on every reconnect.
+
+LINUX MONITORING SERVICES
+------------------------
+
+Build with USB and systemd support and install the normal NUT USB permission
+rules, system user definitions and temporary directory definitions. Use the
+dedicated NUT account. Set +MODE=netserver+ in +nut.conf+, configure the two
+device sections above, and bind +upsd.conf+ to loopback:
+
+----
+LISTEN 127.0.0.1 3493
+LISTEN ::1 3493
+----
+
+For automatic discovery, use +nut-driver-enumerator-daemon.service+,
++nut-driver.target+ and +nut-server.service+. Keep +nut-monitor.service+
+disabled for a monitoring-only installation. List and inspect current units:
+
+----
+upsc -l localhost
+upsc armour_usb_001_010@localhost
+----
+
+The discovery timer updates standard configuration; only native NUT drivers
+read UPS telemetry. No extra kernel module is needed. Automatic discovery
+requires Linux sysfs, systemd and Python 3.8 or later; the native driver can
+also be configured manually.
+Shutdown policy and physical power-event qualification are separate tasks.
+
+DATA AND LIMITATIONS
+--------------------
+
+The driver publishes load percentage, battery charge and pack voltage,
+input and output voltages, input frequency, temperature, firmware and
+electrical ratings. It decodes the observed Q1 status bits into standard
+NUT status and alarms. Physical outage transitions require separate testing.
+
+Actual watts and remaining runtime are not supplied by the validated queries
+and are not estimated. Load percentage must not be treated as measured watts.
+No instant commands or writable hardware variables are advertised. The
+shutdown entry point reports unsupported without sending a power command.
+
+PROTOCOL EVIDENCE
+-----------------
+
+link:https://github.com/networkupstools/nut/issues/3040[NUT issue 3040]
+documents Windows captures and initial telemetry requests. Static analysis of
+the UPSmart 2.1 Windows program confirms the same descriptor dispatch. The
+driver and tests use the exact observed descriptor and telemetry framing.
+
+AUTHOR
+------
+
+NUT contributors, with OpenAI Codex assistance.
+
+SEE ALSO
+--------
+
+linkman:ups.conf[5], linkman:upsd[8], linkman:upsdrvsvcctl[8]
+
+include::../nut-related-man.txt[]

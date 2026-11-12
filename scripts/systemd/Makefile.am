@@ -1,6 +1,7 @@
 # Network UPS Tools: scripts/systemd
 
 EXTRA_DIST = README.adoc
+EXTRA_DIST += nut-vida-discovery.service.in nut-vida-discovery.timer.in
 
 if HAVE_SYSTEMD
 
@@ -17,6 +18,10 @@ systemdsystemunit_DATA = \
         nut-driver.target   \
         nut-udev-settle.service \
         nut.target
+
+if WITH_VIDA_DISCOVERY
+systemdsystemunit_DATA += nut-vida-discovery.service nut-vida-discovery.timer
+endif WITH_VIDA_DISCOVERY
 
 if !WITH_LIBSYSTEMD_INHIBITOR
 systemdsystemunit_DATA += \

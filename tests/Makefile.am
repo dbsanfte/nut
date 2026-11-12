@@ -19,6 +19,8 @@ EXTRA_DIST = become-user-root-warning-test.sh nut-driver-enumerator-test.sh nut-
 EXTRA_DIST += cppunit-warnings.h cppunit-warnings-end.h
 EXTRA_DIST += pynut-commands-test.py
 EXTRA_DIST += upsset-string-test.py
+EXTRA_DIST += vida_discovery_test.py
+
 
 TESTS =
 noinst_LTLIBRARIES =
@@ -35,6 +37,7 @@ CPPUNIT_NUT_CXXFLAGS = @CPPUNIT_NUT_CXXFLAGS@
 
 check_PROGRAMS = $(TESTS)
 check_SCRIPTS =
+
 
 # NUT Integration Testing suite
 memcheck-NIT memcheck-NIT-devel memcheck-NIT-sandbox memcheck-NIT-sandbox-devel \
@@ -229,6 +232,14 @@ getvaluetest_LDADD = $(NUT_LIBCOMMON)
 # subdrivers are linked from a library here. The simulation replaces calls
 # of the libusb-1.0 API.
 if WITH_LIBUSB_1_0
+if WITH_VIDA_USB
+TESTS += vida_utest
+vida_utest_SOURCES = vida_utest.c $(top_srcdir)/drivers/vida-protocol.c
+vida_utest_CFLAGS = $(AM_CFLAGS) $(LIBUSB_CFLAGS)
+vida_utest_LDADD = $(NUT_LIBCOMMON) $(LIBUSB_LIBS)
+vida_utest_DEPENDENCIES = $(NUT_LIBCOMMON) $(top_srcdir)/drivers/nutdrv_vida.c $(top_srcdir)/drivers/vida-report-desc.h
+endif WITH_VIDA_USB
+
 TESTS += nutdrv_qx_cypress_utest
 nutdrv_qx_cypress_utest.c: $(top_srcdir)/drivers/nutdrv_qx.c
 nutdrv_qx_cypress_utest_SOURCES = nutdrv_qx_cypress_utest.c
@@ -412,6 +423,12 @@ endif !HAVE_VALGRIND
 
 CHECK_LOCAL_TARGETS = become-user-root-warning-test upsset-string-test
 CHECK_LOCAL_TARGETS_PYNUT =
+
+if WITH_VIDA_DISCOVERY
+CHECK_LOCAL_TARGETS += vida-discovery-test
+vida-discovery-test:
+	$(AM_V_at)NUT_TOP_SRCDIR='$(abs_top_srcdir)' @PYTHON3@ $(srcdir)/vida_discovery_test.py
+endif WITH_VIDA_DISCOVERY
 
 if WITH_CGI
 if HAVE_PYTHON3

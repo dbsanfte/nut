@@ -22,6 +22,14 @@ PLANNED: Release notes for NUT 2.8.6 - what's new since 2.8.5
 
 https://github.com/networkupstools/nut/milestone/13
 
+ - New `nutdrv_vida` driver provides read-only USB monitoring for VIDA
+   Armour ARM3000 units with V4.20 firmware. It authenticates the HID report
+   descriptor, requires explicit physical bus/port selection, and supports
+   multiple identical units without relying on USB device addresses.
+   Optional Linux discovery services maintain those selectors automatically
+   as units are added, removed or moved to other physical ports, including
+   an empty inventory. Attachment names do not imply permanent UPS identity.
+
  - (expected) Dynamic Mapping Files (DMF) feature supported, to allow
    the driver binaries to be built once and data mappings to be loaded
    and modernized on the fly (porting from 42ITy project)
