@@ -18,7 +18,7 @@
 #endif
 
 #define DRIVER_NAME "VIDA Armour USB telemetry driver"
-#define DRIVER_VERSION "0.01"
+#define DRIVER_VERSION "0.02"
 #define VIDA_VENDORID 0x0001
 #define VIDA_TIMEOUT 2000
 
@@ -96,7 +96,9 @@ static int vida_open(void)
 	struct libusb_device_descriptor descriptor;
 	ssize_t count, i;
 	int matches = 0, result;
-	unsigned char report[sizeof(vida_report_descriptor)];
+	/* One extra byte distinguishes a complete descriptor from a matching
+	 * prefix of a longer layout, without probing any string descriptors. */
+	unsigned char report[sizeof(vida_report_descriptor) + 1];
 	char bus[4], port[32];
 	count = libusb_get_device_list(vida_context, &devices);
 	if (count < 0) {
@@ -147,8 +149,8 @@ static int vida_open(void)
 	vida_claimed = 1;
 	result = libusb_control_transfer(vida_handle, 0x81, 6, 0x2200, 0,
 		report, sizeof(report), VIDA_TIMEOUT);
-	if (result != (int)sizeof(report)
-	|| memcmp(report, vida_report_descriptor, sizeof(report))) {
+	if (result != (int)sizeof(vida_report_descriptor)
+	|| memcmp(report, vida_report_descriptor, sizeof(vida_report_descriptor))) {
 		upsdebugx(1, "VIDA HID report descriptor does not match admitted ARM3000 layout");
 		vida_close();
 		return 0;

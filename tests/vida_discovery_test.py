@@ -39,7 +39,9 @@ class DiscoveryTests(unittest.TestCase):
         self.usb.mkdir()
         self.hid.mkdir()
         self.state = self.root / 'state.json'
-        self.config = self.root / 'ups.conf'
+        self.config = self.root / 'administrator.conf'
+        self.config.write_text('')
+        self.output = self.root / 'ups.conf'
         self.sequence = 0
 
     def tearDown(self):
@@ -73,7 +75,7 @@ class DiscoveryTests(unittest.TestCase):
         shutil.rmtree(self.usb / port)
 
     def run_scan(self, boot='boot-1'):
-        return discovery.reconcile(self.usb, self.hid, boot, self.state, self.config)
+        return discovery.reconcile(self.usb, self.hid, boot, self.state, self.config, self.output)
 
     def test_zero_two_three_zero_and_reconnect_elsewhere(self):
         self.assertEqual(self.run_scan()['devices'], [])
@@ -83,16 +85,16 @@ class DiscoveryTests(unittest.TestCase):
         self.add('2-4.3')
         result = self.run_scan()
         self.assertEqual(len(result['devices']), 3)
-        self.assertIn('busport = "^004[.]003$"', self.config.read_text())
+        self.assertIn('busport = "^004[.]003$"', self.output.read_text())
         for port in ['1-10', '1-2', '2-4.3']:
             self.remove(port)
         self.assertEqual(self.run_scan()['devices'], [])
-        self.assertNotIn('driver =', self.config.read_text())
+        self.assertNotIn('driver =', self.output.read_text())
         self.add('3-9')
         self.add('2-6.1')
         result = self.run_scan()
         self.assertEqual({device['usb_path'] for device in result['devices']}, {'3-9', '2-6.1'})
-        self.assertNotIn('armour_usb_001_010', self.config.read_text())
+        self.assertNotIn('armour_usb_001_010', self.output.read_text())
 
     def test_partial_removal_preserves_other_devices(self):
         self.add('1-10')
@@ -156,12 +158,12 @@ class DiscoveryTests(unittest.TestCase):
     def test_repeated_scan_does_not_rewrite_configuration(self):
         self.add('1-10')
         self.assertTrue(self.run_scan()['configuration_changed'])
-        before = self.config.stat()
+        before = self.output.stat()
         for unused in range(20):
             del unused
             self.assertFalse(self.run_scan()['configuration_changed'])
-        self.assertEqual(self.config.stat().st_ino, before.st_ino)
-        self.assertEqual(self.config.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertEqual(self.output.stat().st_ino, before.st_ino)
+        self.assertEqual(self.output.stat().st_mtime_ns, before.st_mtime_ns)
 
     def test_manual_sections_and_file_mode_are_preserved(self):
         original = 'pollinterval = 3\n[manual]\n    driver = dummy-ups\n    port = other\n'
@@ -169,20 +171,22 @@ class DiscoveryTests(unittest.TestCase):
         self.config.chmod(0o640)
         self.add('1-10')
         self.run_scan()
-        self.assertTrue(self.config.read_text().startswith(original))
+        self.assertTrue(self.output.read_text().startswith(original))
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
         self.remove('1-10')
         self.run_scan()
-        self.assertIn(original, self.config.read_text())
+        self.assertIn(original, self.output.read_text())
 
     def test_configuration_symlink_is_preserved(self):
         target = self.root / 'actual.conf'
         target.write_text('# administrator file\n')
+        self.config.unlink()
         self.config.symlink_to(target)
         self.add('1-10')
         self.run_scan()
         self.assertTrue(self.config.is_symlink())
-        self.assertIn('armour_usb_001_010', target.read_text())
+        self.assertEqual(target.read_text(), '# administrator file\n')
+        self.assertIn('armour_usb_001_010', self.output.read_text())
 
     def test_malformed_block_and_manual_collision_do_not_write(self):
         self.add('1-10')
@@ -197,11 +201,11 @@ class DiscoveryTests(unittest.TestCase):
     def test_inventory_error_does_not_remove_known_devices(self):
         self.add('1-10')
         self.run_scan()
-        before = self.config.read_bytes()
+        before = self.output.read_bytes()
         with patch.object(discovery, 'connection_identity', side_effect=PermissionError('denied')):
             with self.assertRaises(PermissionError):
                 self.run_scan()
-        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.output.read_bytes(), before)
 
     def test_object_disappearing_during_scan_is_handled(self):
         self.add('1-10')
@@ -214,6 +218,43 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_scan()
         self.assertEqual(self.config.read_text(), '# unchanged\n')
+
+    def test_concurrent_administrator_edit_is_never_overwritten(self):
+        self.add('1-10')
+        self.run_scan()
+        writer = discovery.atomic_write
+        edit = '\n[administrator_added]\n    driver = dummy-ups\n    port = other\n'
+
+        def edit_during_publication(path, *args, **kwargs):
+            if path == self.state:
+                self.config.write_text(edit)
+            return writer(path, *args, **kwargs)
+
+        with patch.object(discovery, 'atomic_write', side_effect=edit_during_publication):
+            self.run_scan()
+        self.assertEqual(self.config.read_text(), edit)
+        self.run_scan()
+        self.assertIn('[administrator_added]', self.output.read_text())
+
+    def test_input_cannot_be_the_generated_output_or_its_symlink(self):
+        self.output.symlink_to(self.config)
+        with self.assertRaises(ValueError):
+            self.run_scan()
+        self.assertEqual(self.config.read_text(), '')
+        self.assertFalse(self.state.exists())
+
+    def test_empty_inventory_without_loaded_hid_module(self):
+        self.hid.rmdir()
+        self.assertEqual(self.run_scan()['devices'], [])
+
+    def test_missing_administrator_input_preserves_generation(self):
+        self.add('1-10')
+        self.run_scan()
+        before = self.output.read_bytes()
+        self.config.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.run_scan()
+        self.assertEqual(self.output.read_bytes(), before)
 
     def test_native_and_discovery_identity_contracts_match(self):
         self.assertEqual(len(REPORT), 624)

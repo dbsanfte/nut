@@ -37,11 +37,11 @@
 #include "nutdrv_vida.c"
 
 static int checks, failures;
-static int connected = 1, bad_report, fail_query = -1, busy, address_generation;
+static int connected = 1, bad_report, long_report, short_report, fail_query = -1, busy, address_generation;
 static int opens, closes, detaches, attaches, claims, releases, exits, lists_freed;
 static int reads, writes, good, stale, published;
 static unsigned char query_seen[256];
-static int tokens[2], context_token;
+static int tokens[2][2], context_token;
 static libusb_device *device_list[2];
 static char *bus_pattern = "^001$", *port_pattern = "^010$";
 static char stored_load[128], stored_charge[128], stored_status[64];
@@ -91,8 +91,8 @@ void sim_exit(libusb_context *context)
 ssize_t sim_list(libusb_context *context, libusb_device ***list)
 {
 	NUT_UNUSED_VARIABLE(context);
-	device_list[0] = (libusb_device *)&tokens[0];
-	device_list[1] = (libusb_device *)&tokens[1];
+	device_list[0] = (libusb_device *)&tokens[address_generation % 2][0];
+	device_list[1] = (libusb_device *)&tokens[address_generation % 2][1];
 	*list = device_list;
 	return connected ? 2 : 0;
 }
@@ -121,14 +121,14 @@ uint8_t sim_bus(libusb_device *device)
 int sim_ports(libusb_device *device, uint8_t *ports, int capacity)
 {
 	CHECK(capacity >= 1);
-	ports[0] = device == (libusb_device *)&tokens[0] ? 10 : 2;
+	ports[0] = device == (libusb_device *)&tokens[address_generation % 2][0] ? 10 : 2;
 	return 1;
 }
 
 int sim_open(libusb_device *device, libusb_device_handle **handle)
 {
-	/* Changing enumeration addresses does not alter the physical selector. */
-	NUT_UNUSED_VARIABLE(address_generation);
+	/* A new enumeration supplies different libusb objects at the same ports. */
+	CHECK(device == device_list[0] || device == device_list[1]);
 	*handle = (libusb_device_handle *)device;
 	opens++;
 	return 0;
@@ -197,19 +197,25 @@ int sim_transfer(libusb_device_handle *handle, uint8_t type, uint8_t request,
 	unsigned int timeout)
 {
 	char status[80];
-	int device = handle == (libusb_device_handle *)&tokens[0] ? 0 : 1;
+	int device = handle == (libusb_device_handle *)&tokens[address_generation % 2][0] ? 0 : 1;
+	CHECK(handle == (libusb_device_handle *)device_list[0] ||
+		handle == (libusb_device_handle *)device_list[1]);
 	CHECK(request == 6 && timeout == VIDA_TIMEOUT);
 	if (!(type & 0x80)) {
 		writes++;
 		return LIBUSB_ERROR_NOT_SUPPORTED;
 	}
 	if (type == 0x81) {
-		CHECK(value == 0x2200 && index == 0 && length == sizeof(vida_report_descriptor));
+		CHECK(value == 0x2200 && index == 0 && length == sizeof(vida_report_descriptor) + 1);
 		memcpy(data, vida_report_descriptor, sizeof(vida_report_descriptor));
 		if (bad_report) {
 			data[0] ^= 1;
 		}
-		return (int)sizeof(vida_report_descriptor);
+		if (long_report) {
+			data[sizeof(vida_report_descriptor)] = 0x05;
+			return (int)sizeof(vida_report_descriptor) + 1;
+		}
+		return (int)sizeof(vida_report_descriptor) - short_report;
 	}
 	reads++;
 	query_seen[value & 0xff] = 1;
@@ -322,6 +328,14 @@ static void test_second_port_and_failed_admission(void)
 	upsdrv_updateinfo();
 	CHECK(reads == before_reads && good == before_good && vida_handle == NULL);
 	bad_report = 0;
+	long_report = 1;
+	upsdrv_updateinfo();
+	CHECK(reads == before_reads && good == before_good && vida_handle == NULL);
+	long_report = 0;
+	short_report = 1;
+	upsdrv_updateinfo();
+	CHECK(reads == before_reads && good == before_good && vida_handle == NULL);
+	short_report = 0;
 	busy = 1;
 	before_releases = releases;
 	upsdrv_updateinfo();

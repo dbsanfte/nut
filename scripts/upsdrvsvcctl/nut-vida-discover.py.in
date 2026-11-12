@@ -1,5 +1,5 @@
 #!@PYTHON3@
-"""Reconcile authenticated Linux USB attachments into standard NUT configuration.
+"""Reconcile authenticated Linux USB attachments into a generated NUT configuration.
 
 No USB is opened and no telemetry is polled here. Kernel-cached report bytes
 authenticate new attachments. A boot-scoped record retains that admission
@@ -34,8 +34,6 @@ def connection_identity(path):
 
 def discover(usb_root, hid_root, boot_id, previous):
     """Admit exact HID layouts; reuse admission only for the same live object."""
-    if not hid_root.is_dir():
-        raise FileNotFoundError('HID inventory is unavailable: ' + str(hid_root))
     if not isinstance(previous.get('connections', {}), dict):
         raise ValueError('Invalid cached VIDA connections')
     old = previous.get('connections', {}) if previous.get('boot_id') == boot_id else {}
@@ -75,16 +73,11 @@ def discover(usb_root, hid_root, boot_id, previous):
 
 
 def render_config(original, devices):
-    """Replace only the owned block and preserve administrator configuration."""
-    if original.count(BEGIN) != original.count(END) or original.count(BEGIN) > 1:
-        raise ValueError('Malformed or duplicate VIDA managed configuration block')
-    if BEGIN in original:
-        before, rest = original.split(BEGIN, 1)
-        unused, after = rest.split(END, 1)
-        del unused
-    else:
-        before = original + ('\n' if original and not original.endswith('\n') else '')
-        after = '\n'
+    """Compose a derived inventory; the input remains administrator-owned."""
+    if BEGIN in original or END in original:
+        raise ValueError('Remove the legacy VIDA managed block from the administrator file before enabling discovery')
+    before = original + ('\n' if original and not original.endswith('\n') else '')
+    after = '\n'
     manual_names = set(re.findall(r'^\s*\[([^]\r\n]+)\]', before + after, flags=re.MULTILINE))
     block = [BEGIN, '# Generated names follow USB attachments, not physical UPS identities.']
     for device in devices:
@@ -131,19 +124,21 @@ def atomic_write(path, text, default_mode=0o640, default_gid=None):
     return True
 
 
-def reconcile(usb_root, hid_root, boot_id, state_path, config_path, gid=None):
+def reconcile(usb_root, hid_root, boot_id, state_path, config_path, output_path, gid=None):
     """Validate a generation; admission must precede driver configuration."""
+    if output_path.resolve() == config_path.resolve():
+        raise ValueError('Generated configuration must differ from administrator input')
     previous = json.loads(state_path.read_text()) if state_path.exists() else {}
     if not isinstance(previous, dict):
         raise ValueError('Invalid VIDA discovery state')
     result = discover(usb_root, hid_root, boot_id, previous)
-    original = config_path.read_text() if config_path.exists() else ''
+    original = config_path.read_text()
     generated = render_config(original, result['devices'])
     pending_changed = result['pending'] != previous.get('pending', [])
     # NDE may start a driver immediately after config publication; preserve its
     # proven connection identity before its claim removes the kernel HID node.
     atomic_write(state_path, json.dumps(result, sort_keys=True, indent=2) + '\n', 0o600)
-    result['configuration_changed'] = atomic_write(config_path, generated, default_gid=gid)
+    result['configuration_changed'] = atomic_write(output_path, generated, default_gid=gid)
     result['pending_changed'] = pending_changed
     return result
 
@@ -152,6 +147,7 @@ def main(argv=None):
     """Run one serialized reconciliation; systemd supplies periodic scheduling."""
     parser = argparse.ArgumentParser(description='Discover VIDA attachments into ups.conf; no USB commands.')
     parser.add_argument('--config', type=Path, default=Path('@CONFPATH@/ups.conf'))
+    parser.add_argument('--output', type=Path, default=Path('/run/nut-vida-discovery/ups.conf'))
     parser.add_argument('--state', type=Path, default=Path('/run/nut-vida-discovery/state.json'))
     parser.add_argument('--usb-root', type=Path, default=Path('/sys/bus/usb/devices'))
     parser.add_argument('--hid-root', type=Path, default=Path('/sys/bus/hid/devices'))
@@ -168,7 +164,7 @@ def main(argv=None):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return 0
-            result = reconcile(args.usb_root, args.hid_root, args.boot_id.read_text().strip(), args.state, args.config, gid)
+            result = reconcile(args.usb_root, args.hid_root, args.boot_id.read_text().strip(), args.state, args.config, args.output, gid)
         if result['configuration_changed'] or result['pending_changed']:
             print(json.dumps({key: result[key] for key in ['devices', 'pending', 'configuration_changed']}))
         return 0

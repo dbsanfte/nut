@@ -36,8 +36,23 @@ For changing USB connections, enable +nut-vida-discovery.service+ and
 +nut-vida-discovery.timer+ along with the standard NUT driver enumerator
 daemon. The discovery service scans the kernel USB inventory every three
 seconds without issuing USB requests. It authenticates new devices using
-the known report descriptor and maintains only a marked block in +ups.conf+.
-Existing administrator configuration outside that block is preserved.
+the known report descriptor and writes a derived configuration to
++/run/nut-vida-discovery/ups.conf+. It reads the administrator's +ups.conf+
+without modifying it, so concurrent administrator edits cannot be lost.
+The next scan incorporates those edits into the derived configuration.
+
+Opt in by creating +nut-vida-discovery.conf+ in NUT's configuration directory
+with the following environment assignment:
+
+----
+NUT_UPSCONF=/run/nut-vida-discovery/ups.conf
+----
+
+Make that file readable by root and the NUT group, and writable only by root.
+Packaged service drop-ins apply this override to the server, drivers and
+enumerator. Other NUT configuration files continue to use their normal
+locations. For manual administration with +upsdrvctl+, export +NUT_UPSCONF+
+with the same value. A missing explicitly selected file is an error.
 
 Adding a third unit, moving cables, removing some or all units, and later
 reconnecting them requires no configuration edit. The NUT driver enumerator
@@ -53,9 +68,23 @@ attachment. A previously admitted kernel connection remains recognized while
 the native driver owns its HID interface. Cached admission is invalid after
 removal, address or object replacement, or reboot.
 
-For cold boot ordering, a +nut-driver@.service+ drop-in may specify
-+After=nut-vida-discovery.service+. Enable discovery at +nut.target+ so its
-initial inventory is prepared before existing driver instances start.
+Packaged drop-ins order existing driver instances after discovery, so the
+initial inventory is authenticated before drivers claim the HID interfaces.
+After creating the opt-in file and configuring the enumerator, enable the
+services and restart the stack:
+
+----
+systemctl enable nut-vida-discovery.service nut-vida-discovery.timer
+systemctl enable nut-driver-enumerator-daemon.service nut-server.service
+systemctl restart nut.target
+----
+
+An experimental earlier version wrote a marked discovery block directly to
+the administrator's +ups.conf+. Stop the NUT stack, back up that file and
+remove that block before using this version; discovery rejects such input.
+To return to manual configuration, stop the stack and discovery timer,
+disable discovery, remove +nut-vida-discovery.conf+, configure the desired
+manual device sections, and restart the stack.
 
 MANUAL CONFIGURATION
 --------------------
@@ -92,8 +121,8 @@ LINUX MONITORING SERVICES
 
 Build with USB and systemd support and install the normal NUT USB permission
 rules, system user definitions and temporary directory definitions. Use the
-dedicated NUT account. Set +MODE=netserver+ in +nut.conf+, configure the two
-device sections above, and bind +upsd.conf+ to loopback:
+dedicated NUT account. Set +MODE=netserver+ in +nut.conf+, select automatic
+discovery or configure manual device sections, and bind +upsd.conf+ to loopback:
 
 ----
 LISTEN 127.0.0.1 3493
@@ -112,7 +141,9 @@ upsc armour_usb_001_010@localhost
 The discovery timer updates standard configuration; only native NUT drivers
 read UPS telemetry. No extra kernel module is needed. Automatic discovery
 requires Linux sysfs, systemd and Python 3.8 or later; the native driver can
-also be configured manually.
+also be configured manually. Configure enables discovery only when these
+dependencies and +nutdrv_vida+ are selected. Use +--disable-vida-discovery+
+to omit it, or +--enable-vida-discovery+ to require its dependencies.
 Shutdown policy and physical power-event qualification are separate tasks.
 
 DATA AND LIMITATIONS
@@ -137,6 +168,12 @@ link:https://github.com/networkupstools/nut/issues/3040[NUT issue 3040]
 documents Windows captures and initial telemetry requests. Static analysis of
 the UPSmart 2.1 Windows program confirms the same descriptor dispatch. The
 driver and tests use the exact observed descriptor and telemetry framing.
+
+Although the status payload resembles Q1, this is not a general Qx command
+transport. Different string descriptor indices can trigger hardware actions.
+The separate driver confines all USB requests to descriptor authentication
+and the four observed telemetry indices; it does not probe strings or expose
+the command, write-variable and shutdown paths of a general Qx backend.
 
 AUTHOR
 ------
