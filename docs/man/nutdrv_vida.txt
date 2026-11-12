@@ -148,4 +148,4 @@ SEE ALSO
 
 linkman:ups.conf[5], linkman:upsd[8], linkman:upsdrvsvcctl[8]
 
-include::../nut-related-man.txt[]
+The NUT (Network UPS Tools) home page: https://www.networkupstools.org/
